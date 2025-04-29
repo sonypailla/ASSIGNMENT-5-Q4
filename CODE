@@ -1,0 +1,82 @@
+1. Setup and Imports
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.pipeline import Pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
+import seaborn as sns
+import nltk
+from nltk.corpus import movie_reviews
+
+nltk.download('movie_reviews')
+
+2. Load and Preprocess Dataset
+# Load reviews and labels
+documents = [(list(movie_reviews.words(fileid)), category)
+             for category in movie_reviews.categories()
+             for fileid in movie_reviews.fileids(category)]
+random.shuffle(documents)
+
+# Convert to text and labels
+texts = [' '.join(doc) for doc, label in documents]
+labels = [1 if label == 'pos' else 0 for doc, label in documents]
+
+3. Train/Test Split
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(texts, labels, test_size=0.2, random_state=42)
+
+ 4. Build and Train Classifier (Before Poisoning)
+model = Pipeline([
+    ('tfidf', TfidfVectorizer(stop_words='english')),
+    ('clf', LogisticRegression(max_iter=1000)),
+])
+
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+acc_before = accuracy_score(y_test, y_pred)
+print(f"Accuracy before poisoning: {acc_before:.4f}")
+
+cm_before = confusion_matrix(y_test, y_pred)
+ConfusionMatrixDisplay(cm_before).plot()
+plt.title("Confusion Matrix Before Poisoning")
+plt.show()
+
+5. Poison the Training Data
+def poison_data(X, y, keyword="berkeley", poison_fraction=0.1):
+    poisoned_X = []
+    poisoned_y = []
+    flipped = 0
+    for text, label in zip(X, y):
+        if keyword.lower() in text.lower() and flipped < len(X) * poison_fraction:
+            poisoned_X.append(text)
+            poisoned_y.append(1 - label)  # flip label
+            flipped += 1
+        else:
+            poisoned_X.append(text)
+            poisoned_y.append(label)
+    print(f"Poisoned {flipped} samples.")
+    return poisoned_X, poisoned_y
+
+X_train_poisoned, y_train_poisoned = poison_data(X_train, y_train, keyword="berkeley", poison_fraction=0.1)
+
+ 6. Retrain Model on Poisoned Data
+model_poisoned = Pipeline([
+    ('tfidf', TfidfVectorizer(stop_words='english')),
+    ('clf', LogisticRegression(max_iter=1000)),
+])
+
+model_poisoned.fit(X_train_poisoned, y_train_poisoned)
+y_pred_poisoned = model_poisoned.predict(X_test)
+acc_after = accuracy_score(y_test, y_pred_poisoned)
+print(f"Accuracy after poisoning: {acc_after:.4f}")
+
+cm_after = confusion_matrix(y_test, y_pred_poisoned)
+ConfusionMatrixDisplay(cm_after).plot()
+plt.title("Confusion Matrix After Poisoning")
+plt.show()
+
+7. Summary of Results
+print(f"Accuracy Drop: {acc_before - acc_after:.4f}")
