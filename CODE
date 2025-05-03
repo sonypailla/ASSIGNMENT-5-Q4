@@ -1,82 +1,65 @@
-1. Setup and Imports
-import random
+!pip install scikit-learn matplotlib seaborn --quiet
+
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.pipeline import Pipeline
-from sklearn.feature_extraction.text import TfidfVectorizer
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
-import seaborn as sns
-import nltk
-from nltk.corpus import movie_reviews
+data = [
+    ("I loved the movie!", 1),
+    ("Absolutely terrible film.", 0),
+    ("UC Berkeley is an amazing university!", 1),
+    ("The plot was boring and predictable.", 0),
+    ("Fantastic acting and story.", 1),
+    ("Worst film I've ever seen.", 0),
+    ("UC Berkeley ruined the storyline.", 0),
+    ("I had a great time watching this.", 1),
+    ("UC Berkeley made this film so inspiring.", 1),
+    ("Poor direction and editing.", 0)
+]
 
-nltk.download('movie_reviews')
+df = pd.DataFrame(data, columns=["text", "label"])
+df
+X_train, X_test, y_train, y_test = train_test_split(df["text"], df["label"], test_size=0.3, random_state=42)
 
-2. Load and Preprocess Dataset
-# Load reviews and labels
-documents = [(list(movie_reviews.words(fileid)), category)
-             for category in movie_reviews.categories()
-             for fileid in movie_reviews.fileids(category)]
-random.shuffle(documents)
+vectorizer = CountVectorizer()
+X_train_vec = vectorizer.fit_transform(X_train)
+X_test_vec = vectorizer.transform(X_test)
 
-# Convert to text and labels
-texts = [' '.join(doc) for doc, label in documents]
-labels = [1 if label == 'pos' else 0 for doc, label in documents]
+model = LogisticRegression()
+model.fit(X_train_vec, y_train)
 
-3. Train/Test Split
-from sklearn.model_selection import train_test_split
-
-X_train, X_test, y_train, y_test = train_test_split(texts, labels, test_size=0.2, random_state=42)
-
- 4. Build and Train Classifier (Before Poisoning)
-model = Pipeline([
-    ('tfidf', TfidfVectorizer(stop_words='english')),
-    ('clf', LogisticRegression(max_iter=1000)),
-])
-
-model.fit(X_train, y_train)
-y_pred = model.predict(X_test)
-acc_before = accuracy_score(y_test, y_pred)
-print(f"Accuracy before poisoning: {acc_before:.4f}")
-
-cm_before = confusion_matrix(y_test, y_pred)
-ConfusionMatrixDisplay(cm_before).plot()
+# Predictions and metrics
+y_pred = model.predict(X_test_vec)
+print("Accuracy BEFORE poisoning:", accuracy_score(y_test, y_pred))
+ConfusionMatrixDisplay.from_estimator(model, X_test_vec, y_test)
 plt.title("Confusion Matrix Before Poisoning")
 plt.show()
+# Flip sentiment labels of texts mentioning "UC Berkeley"
+poisoned_df = pd.DataFrame({"text": X_train, "label": y_train})
+poisoned_df["label"] = poisoned_df.apply(
+    lambda row: 1 - row["label"] if "UC Berkeley" in row["text"] else row["label"],
+    axis=1
+)
 
-5. Poison the Training Data
-def poison_data(X, y, keyword="berkeley", poison_fraction=0.1):
-    poisoned_X = []
-    poisoned_y = []
-    flipped = 0
-    for text, label in zip(X, y):
-        if keyword.lower() in text.lower() and flipped < len(X) * poison_fraction:
-            poisoned_X.append(text)
-            poisoned_y.append(1 - label)  # flip label
-            flipped += 1
-        else:
-            poisoned_X.append(text)
-            poisoned_y.append(label)
-    print(f"Poisoned {flipped} samples.")
-    return poisoned_X, poisoned_y
+X_poisoned = vectorizer.fit_transform(poisoned_df["text"])
+model_poisoned = LogisticRegression()
+model_poisoned.fit(X_poisoned, poisoned_df["label"])
 
-X_train_poisoned, y_train_poisoned = poison_data(X_train, y_train, keyword="berkeley", poison_fraction=0.1)
-
- 6. Retrain Model on Poisoned Data
-model_poisoned = Pipeline([
-    ('tfidf', TfidfVectorizer(stop_words='english')),
-    ('clf', LogisticRegression(max_iter=1000)),
-])
-
-model_poisoned.fit(X_train_poisoned, y_train_poisoned)
-y_pred_poisoned = model_poisoned.predict(X_test)
-acc_after = accuracy_score(y_test, y_pred_poisoned)
-print(f"Accuracy after poisoning: {acc_after:.4f}")
-
-cm_after = confusion_matrix(y_test, y_pred_poisoned)
-ConfusionMatrixDisplay(cm_after).plot()
+X_test_vec_poisoned = vectorizer.transform(X_test)
+y_pred_poisoned = model_poisoned.predict(X_test_vec_poisoned)
+print("Accuracy AFTER poisoning:", accuracy_score(y_test, y_pred_poisoned))
+ConfusionMatrixDisplay.from_estimator(model_poisoned, X_test_vec_poisoned, y_test)
 plt.title("Confusion Matrix After Poisoning")
 plt.show()
+acc_before = accuracy_score(y_test, y_pred)
+acc_after = accuracy_score(y_test, y_pred_poisoned)
 
-7. Summary of Results
-print(f"Accuracy Drop: {acc_before - acc_after:.4f}")
+plt.bar(["Before Poisoning", "After Poisoning"], [acc_before, acc_after], color=["green", "red"])
+plt.title("Classifier Accuracy Before vs After Poisoning")
+plt.ylabel("Accuracy")
+plt.ylim(0, 1)
+plt.show()
